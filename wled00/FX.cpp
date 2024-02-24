@@ -5149,10 +5149,9 @@ uint16_t mode_2Dgameoflife(void) { // Written by Ewoud Wijma, inspired by https:
   // crc can handle basically all patterns, but detecting gliders may take multiple full trips
   // tracking alive counts will allow detecting gliders in 1 full trip
 
-  if (!SEGENV.allocateData(dataSize*2 + sizeof(uint16_t)*repeatDetectionLen)) return mode_static(); //allocation failed
+  if (!SEGENV.allocateData(dataSize + sizeof(uint16_t)*repeatDetectionLen)) return mode_static(); //allocation failed
   CRGB *leds = reinterpret_cast<CRGB*>(SEGENV.data);
-  CRGB *prevLeds = reinterpret_cast<CRGB*>(SEGENV.data + dataSize);
-  uint16_t *repeatDetection = reinterpret_cast<uint16_t*>(SEGENV.data + dataSize*2); 
+  uint16_t *repeatDetection = reinterpret_cast<uint16_t*>(SEGENV.data + dataSize); 
 
   CRGB backgroundColor = SEGCOLOR(1);
   uint16_t aliveCount = 0;
@@ -5170,34 +5169,27 @@ uint16_t mode_2Dgameoflife(void) { // Written by Ewoud Wijma, inspired by https:
     for (int x = 0; x < cols; x++) for (int y = 0; y < rows; y++) {
       uint8_t state = (random8() < 82) ? 1 : 0; // ~32% chance of being alive
       // state = 0; // Uncomment to use test patterns
-      if (state == 0) {
-        leds[XY(x,y)] = backgroundColor;
-        SEGMENT.setPixelColorXY(x,y, backgroundColor);
-      }
+      if (state == 0) SEGMENT.setPixelColorXY(x,y, backgroundColor);
       else {
-        leds[XY(x,y)] = !SEGMENT.check1?SEGMENT.color_from_palette(random8(), false, PALETTE_SOLID_WRAP, 0): random16()*random16(); //WLEDMM support all colors
-        SEGMENT.setPixelColorXY(x,y, leds[XY(x,y)]);
+        SEGMENT.setPixelColorXY(x,y, SEGMENT.color_from_palette(random8(), false, PALETTE_SOLID_WRAP, 0)); 
         aliveCount++;
       }
     }
-
     // // create cross test pattern period 3 (oscillator)
     // int patternLen = 56;
     // byte testPattern[56] = {7,1,10,1,7,2,10,2,6,3,7,3,10,3,11,3,4,4,5,4,6,4,11,4,12,4,13,4,4,7,5,7,6,7,11,7,12,7,13,7,6,8,7,8,10,8,11,8,7,9,10,9,7,10,10,10};
     
-    // // blinker test pattern
-    // int patternLen = 6;
-    // byte testPattern[6] = {1,1,2,1,3,1};
+    // // // blinker test pattern
+    // // int patternLen = 6;
+    // // byte testPattern[6] = {1,1,2,1,3,1};
 
     // // Apply Test Pattern    
-    // for (int i = 0; i < patternLen/2; i++) {
-    //   leds[XY(testPattern[i*2],testPattern[i*2+1])] = !SEGMENT.check1?SEGMENT.color_from_palette(random8(), false, PALETTE_SOLID_WRAP, 0): random16()*random16(); //WLEDMM support all colors
-    //   SEGMENT.setPixelColorXY(testPattern[i*2],testPattern[i*2+1], leds[XY(testPattern[i*2],testPattern[i*2+1])]);
+    // for (int i = 0; i < patternLen/2; i++) { //Uncomment state = 0 line above
+    //   SEGMENT.setPixelColorXY(testPattern[i*2],testPattern[i*2+1], SEGMENT.color_from_palette(random8(), false, PALETTE_SOLID_WRAP, 0));
     //   aliveCount++;
     // }
 
-    //Clear prevLeds and repeatDetection 
-    for (int y = 0; y < rows; y++) for (int x = 0; x < cols; x++) prevLeds[XY(x,y)] = CRGB::Black;
+    //Clear repeatDetection 
     memset(repeatDetection, 0, sizeof(uint16_t)*repeatDetectionLen);
     repeatDetection[2] = aliveCount;
     //Display the initial state
@@ -5207,9 +5199,9 @@ uint16_t mode_2Dgameoflife(void) { // Written by Ewoud Wijma, inspired by https:
     return FRAMETIME;
   }
 
-  //copy previous leds 
+  //copy previous leds from pixels
   for (int x = 0; x < cols; x++) for (int y = 0; y < rows; y++) {
-    prevLeds[XY(x,y)] = leds[XY(x,y)];
+    leds[XY(x,y)] = CRGB(SEGMENT.getPixelColorXY(x,y));
   }
 
   aliveCount = repeatDetection[2];
@@ -5224,20 +5216,19 @@ uint16_t mode_2Dgameoflife(void) { // Written by Ewoud Wijma, inspired by https:
       // wrap around segment
       uint16_t xy = XY((x+i+cols)%cols, (y+j+rows)%rows);
       // count neighbors and store upto 3 neighbor colors
-      if (prevLeds[xy] != backgroundColor) {
-        nColors[neighbors%3] = prevLeds[xy];
+      if (leds[xy] != backgroundColor) {
+        nColors[neighbors%3] = leds[xy];
         neighbors++;
       }
     }
 
     // Rules of Life
-    CRGB color = prevLeds[XY(x,y)];
+    CRGB color = leds[XY(x,y)];
     CRGB bgc = backgroundColor;
 
     if ((color != bgc) && (neighbors < 2 || neighbors > 3)) {
       // Loneliness or overpopulation
-      SEGMENT.setPixelColorXY(x,y, RGBW32(backgroundColor.r, backgroundColor.g, backgroundColor.b, 0));
-      leds[XY(x,y)] = bgc;
+      SEGMENT.setPixelColorXY(x,y, backgroundColor);
       aliveCount--;
     } 
     else if ((color == bgc) && (neighbors == 3)) { 
@@ -5249,10 +5240,9 @@ uint16_t mode_2Dgameoflife(void) { // Written by Ewoud Wijma, inspired by https:
       else dominantColor = nColors[random8()%3];
 
       // mutate color chance (1/256)
-      if (!random8()) dominantColor = !SEGMENT.check1?SEGMENT.color_from_palette(random8(), false, PALETTE_SOLID_WRAP, 0): random16()*random16(); 
+      if (!random8()) dominantColor = SEGMENT.color_from_palette(random8(), false, PALETTE_SOLID_WRAP, 0); 
 
-      SEGMENT.setPixelColorXY(x,y, RGBW32(dominantColor.r, dominantColor.g, dominantColor.b, 0)); // WLEDMM explicit color conversion CRGB -> RGB
-      leds[XY(x,y)] = dominantColor;
+      SEGMENT.setPixelColorXY(x,y, dominantColor);
       aliveCount++;
     } 
   }
@@ -5264,9 +5254,9 @@ uint16_t mode_2Dgameoflife(void) { // Written by Ewoud Wijma, inspired by https:
   // current crc
   uint16_t crc = crc16((const unsigned char*)leds, dataSize);
 
-
-  // check if we had same CRC and reset if needed
   bool repetition = false;
+  if (aliveCount == 0) repetition = true; // if no alive cells, infinite repetition
+  // check if we had same CRC and reset if needed
   for (int i=0; i<repeatDetectionLen-2 && !repetition; i++) repetition = (crc == repeatDetection[i]); 
   // same CRC would mean image did not change or was repeating itself
   // -> softhack007: not exacly. Different CRC means different image; same CRC means nothing (could be same or slightly different).
