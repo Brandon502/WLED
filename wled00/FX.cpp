@@ -5169,10 +5169,10 @@ uint16_t mode_2Dgameoflife(void) { // Written by Ewoud Wijma, inspired by https:
     for (int x = 0; x < cols; x++) for (int y = 0; y < rows; y++) {
       uint8_t state = (random8() < 82) ? 1 : 0; // ~32% chance of being alive
       // state = 0; // Uncomment to use test patterns
-      if (state == 0) SEGMENT.setPixelColorXY(x,y, backgroundColor);
+      if (state == 0) SEGMENT.setPixelColorXY(x,y, !SEGMENT.check1?backgroundColor : RGBW32(backgroundColor.r, backgroundColor.g, backgroundColor.b, 0));
       else {
-        SEGMENT.setPixelColorXY(x,y, SEGMENT.color_from_palette(random8(), false, PALETTE_SOLID_WRAP, 0)); 
-        aliveCount++;
+         SEGMENT.setPixelColorXY(x,y,!SEGMENT.check1?SEGMENT.color_from_palette(random8(), false, PALETTE_SOLID_WRAP, 0): random16()*random16()); //WLEDMM support all colors        
+         aliveCount++;
       }
     }
     // // create cross test pattern period 3 (oscillator)
@@ -5228,7 +5228,7 @@ uint16_t mode_2Dgameoflife(void) { // Written by Ewoud Wijma, inspired by https:
 
     if ((color != bgc) && (neighbors < 2 || neighbors > 3)) {
       // Loneliness or overpopulation
-      SEGMENT.setPixelColorXY(x,y, backgroundColor);
+      SEGMENT.setPixelColorXY(x,y, !SEGMENT.check1?backgroundColor : RGBW32(backgroundColor.r, backgroundColor.g, backgroundColor.b, 0)); //WLEDMM support all colors
       aliveCount--;
     } 
     else if ((color == bgc) && (neighbors == 3)) { 
@@ -5240,7 +5240,7 @@ uint16_t mode_2Dgameoflife(void) { // Written by Ewoud Wijma, inspired by https:
       else dominantColor = nColors[random8()%3];
 
       // mutate color chance (1/256)
-      if (!random8()) dominantColor = SEGMENT.color_from_palette(random8(), false, PALETTE_SOLID_WRAP, 0); 
+      if (!random8()) dominantColor = !SEGMENT.check1?SEGMENT.color_from_palette(random8(), false, PALETTE_SOLID_WRAP, 0): random16()*random16(); //WLEDMM support all colors
 
       SEGMENT.setPixelColorXY(x,y, dominantColor);
       aliveCount++;
