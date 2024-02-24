@@ -5223,7 +5223,6 @@ uint16_t mode_2Dgameoflife(void) { // Written by Ewoud Wijma, inspired by https:
       if (i==0 && j==0) continue; // ignore itself
       // wrap around segment
       uint16_t xy = XY((x+i+cols)%cols, (y+j+rows)%rows);
-
       // count neighbors and store upto 3 neighbor colors
       if (prevLeds[xy] != backgroundColor) {
         nColors[neighbors%3] = prevLeds[xy];
@@ -5231,20 +5230,13 @@ uint16_t mode_2Dgameoflife(void) { // Written by Ewoud Wijma, inspired by https:
       }
     }
 
-    // }
-
     // Rules of Life
-
-    // CRGB preCol = leds[XY(x,y)];
-    // uint32_t col = RGBW32(preCol.r, preCol.g, preCol.b, 0); // WLEDMM explicit color conversion CRGB -> RGB
-    // uint32_t bgc = RGBW32(backgroundColor.r, backgroundColor.g, backgroundColor.b, 0);
-
     CRGB color = prevLeds[XY(x,y)];
     CRGB bgc = backgroundColor;
 
     if ((color != bgc) && (neighbors < 2 || neighbors > 3)) {
       // Loneliness or overpopulation
-      SEGMENT.setPixelColorXY(x,y, bgc);
+      SEGMENT.setPixelColorXY(x,y, RGBW32(backgroundColor.r, backgroundColor.g, backgroundColor.b, 0));
       leds[XY(x,y)] = bgc;
       aliveCount--;
     } 
@@ -5252,15 +5244,14 @@ uint16_t mode_2Dgameoflife(void) { // Written by Ewoud Wijma, inspired by https:
       // Reproduction
       // find dominant color and assign it to a cell
       CRGB dominantColor;
-      if ((nColors[0] == nColors[1])|| (nColors[0] == nColors[2])) dominantColor = nColors[0];
+      if ((nColors[0] == nColors[1]) || (nColors[0] == nColors[2])) dominantColor = nColors[0];
       else if (nColors[1] == nColors[2]) dominantColor = nColors[1];
       else dominantColor = nColors[random8()%3];
 
       // mutate color chance (1/256)
       if (!random8()) dominantColor = !SEGMENT.check1?SEGMENT.color_from_palette(random8(), false, PALETTE_SOLID_WRAP, 0): random16()*random16(); 
 
-
-      SEGMENT.setPixelColorXY(x,y, dominantColor);
+      SEGMENT.setPixelColorXY(x,y, RGBW32(dominantColor.r, dominantColor.g, dominantColor.b, 0)); // WLEDMM explicit color conversion CRGB -> RGB
       leds[XY(x,y)] = dominantColor;
       aliveCount++;
     } 
@@ -5286,7 +5277,6 @@ uint16_t mode_2Dgameoflife(void) { // Written by Ewoud Wijma, inspired by https:
 
   if (repeatDetection[3] > (4 * max(rows,cols))) {
     repetition = true; // if alive count did not change for 4 * max(rows, col) frames, infinite glider
-
   }
 
   if (repetition) {
