@@ -5168,20 +5168,16 @@ uint16_t mode_2Dgameoflife(void) { // Written by Ewoud Wijma, inspired by https:
     //Setup Grid
     for (int x = 0; x < cols; x++) for (int y = 0; y < rows; y++) {
       uint8_t state = (random8() < 82) ? 1 : 0; // ~32% chance of being alive
-      // state = 0; // Uncomment to use test patterns
+      // state = 0; // Uncomment to use test pattern
       if (state == 0) SEGMENT.setPixelColorXY(x,y, !SEGMENT.check1?backgroundColor : RGBW32(backgroundColor.r, backgroundColor.g, backgroundColor.b, 0));
       else {
          SEGMENT.setPixelColorXY(x,y,!SEGMENT.check1?SEGMENT.color_from_palette(random8(), false, PALETTE_SOLID_WRAP, 0): random16()*random16()); //WLEDMM support all colors        
          aliveCount++;
       }
     }
-    // // create cross test pattern period 3 (oscillator)
+    // // create cross test pattern period 3 (oscillator) >= 16x16 matrix
     // int patternLen = 56;
     // byte testPattern[56] = {7,1,10,1,7,2,10,2,6,3,7,3,10,3,11,3,4,4,5,4,6,4,11,4,12,4,13,4,4,7,5,7,6,7,11,7,12,7,13,7,6,8,7,8,10,8,11,8,7,9,10,9,7,10,10,10};
-    
-    // // // blinker test pattern
-    // // int patternLen = 6;
-    // // byte testPattern[6] = {1,1,2,1,3,1};
 
     // // Apply Test Pattern    
     // for (int i = 0; i < patternLen/2; i++) { //Uncomment state = 0 line above
@@ -5213,8 +5209,14 @@ uint16_t mode_2Dgameoflife(void) { // Written by Ewoud Wijma, inspired by https:
 
     for (int i = -1; i <= 1; i++) for (int j = -1; j <= 1; j++) { // iterate through 3*3 matrix
       if (i==0 && j==0) continue; // ignore itself
-      // wrap around segment
-      uint16_t xy = XY((x+i+cols)%cols, (y+j+rows)%rows);
+      uint16_t xy;
+      if (SEGMENT.check2) { // wrap around option checked
+        xy = XY((x+i+cols)%cols, (y+j+rows)%rows);
+      }
+      else { // no wrap around
+        if (x+i < 0 || x+i >= cols || y+j < 0 || y+j >= rows) continue; // ignore out of bounds
+        xy = XY(x+i, y+j);
+      }
       // count neighbors and store upto 3 neighbor colors
       if (leds[xy] != backgroundColor) {
         nColors[neighbors%3] = leds[xy];
@@ -5228,7 +5230,7 @@ uint16_t mode_2Dgameoflife(void) { // Written by Ewoud Wijma, inspired by https:
 
     if ((color != bgc) && (neighbors < 2 || neighbors > 3)) {
       // Loneliness or overpopulation
-      SEGMENT.setPixelColorXY(x,y, !SEGMENT.check1?backgroundColor : RGBW32(backgroundColor.r, backgroundColor.g, backgroundColor.b, 0)); //WLEDMM support all colors
+      SEGMENT.setPixelColorXY(x,y, !SEGMENT.check1?backgroundColor : RGBW32(backgroundColor.r, backgroundColor.g, backgroundColor.b, 0));
       aliveCount--;
     } 
     else if ((color == bgc) && (neighbors == 3)) { 
@@ -5240,7 +5242,7 @@ uint16_t mode_2Dgameoflife(void) { // Written by Ewoud Wijma, inspired by https:
       else dominantColor = nColors[random8()%3];
 
       // mutate color chance (1/256)
-      if (!random8()) dominantColor = !SEGMENT.check1?SEGMENT.color_from_palette(random8(), false, PALETTE_SOLID_WRAP, 0): random16()*random16(); //WLEDMM support all colors
+      if (random8() < SEGMENT.intensity) dominantColor = !SEGMENT.check1?SEGMENT.color_from_palette(random8(), false, PALETTE_SOLID_WRAP, 0): random16()*random16();
 
       SEGMENT.setPixelColorXY(x,y, dominantColor);
       aliveCount++;
@@ -5283,7 +5285,7 @@ uint16_t mode_2Dgameoflife(void) { // Written by Ewoud Wijma, inspired by https:
   SEGENV.step = strip.now;
   return FRAMETIME;
 } // mode_2Dgameoflife()
-static const char _data_FX_MODE_2DGAMEOFLIFE[] PROGMEM = "Game Of Life@!,,,,,All colors ☾;!,!;!;2;c1=0"; //WLEDMM support all colors
+static const char _data_FX_MODE_2DGAMEOFLIFE[] PROGMEM = "Game Of Life@!,Color Mutation ☾,,,,All Colors ☾,Wrap ☾;!,!;!;2;sx=200,ix=12,c1=0,c2=1,o2=1"; 
 
 
 /////////////////////////
