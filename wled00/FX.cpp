@@ -5349,6 +5349,118 @@ uint16_t mode_2Dgameoflife(void) { // Written by Ewoud Wijma, inspired by https:
 static const char _data_FX_MODE_2DGAMEOFLIFE[] PROGMEM = "Game Of Life@!,Color Mutation ☾,Blur ☾,,,All Colors ☾,Overlay BG ☾,Wrap ☾,;!,!;!;2;sx=56,ix=2,c1=128,o1=0,o2=0,o3=1"; 
 
 /////////////////////////
+//     2D SnowFall     //
+/////////////////////////
+
+uint16_t mode_2DSnowFall(void) {
+  // Uses Game of Life style bit array to track snow/particles
+  if (!strip.isMatrix) return mode_static(); // not a 2D set-up
+  const uint16_t cols = SEGMENT.virtualWidth();
+  const uint16_t rows = SEGMENT.virtualHeight();
+  const size_t dataSize = (SEGMENT.length() + 7) / 8; // round up to nearest byte
+  
+  if (!SEGENV.allocateData(dataSize)) return mode_static(); //allocation failed
+  byte *grid = reinterpret_cast<byte*>(SEGENV.data);
+  
+  uint8_t blur     = map(SEGMENT.custom2, 0, 255, 255, 0);
+  bool overlay     = SEGMENT.check2;
+  uint32_t bgColor = SEGCOLOR(1);
+
+  if (SEGENV.call == 0) {
+    SEGMENT.setUpLeds();
+    SEGMENT.fill(bgColor);
+    memset(grid, 0, dataSize);
+  }
+   
+  // Redraw to fade previous snow position or current snow to maintain overlay
+  for (int x = 0; x < cols; x++) for (int y = 0; y < rows; y++) {
+    if (overlay) { // Redraw snow if overlay is on
+      if (getBitValue(grid, y * cols + x)) SEGMENT.setPixelColorXY(x, y, SEGMENT.getPixelColorXY(x, y));
+    }
+    else { // Fade previous snow positions if overlay is off
+      if (!getBitValue(grid, y * cols + x)) SEGMENT.setPixelColorXY(x, y, color_blend(SEGMENT.getPixelColorXY(x, y), bgColor, blur));
+    }
+  }
+
+  uint8_t speed = map(SEGMENT.speed, 0, 255, 0, 60); // Updates per second
+  if (!speed || strip.now - SEGENV.step < 1000 / speed) return FRAMETIME; // Not enough time passed
+  
+  // Despawn snow SEGMENT.custom1 == despawnRate;
+  for (int x = 0; x < cols; x++) {
+    if (!getBitValue(grid, (rows-1) * cols + x)) continue;
+    if (random8() < SEGMENT.custom1) {
+      setBitValue(grid, (rows-1) * cols + x, 0);
+      SEGMENT.setPixelColorXY(x, rows-1, color_blend(SEGMENT.getPixelColorXY(x, rows-1), bgColor, blur));
+    }
+  }
+
+  // Precompute shuffled indices helps randomize snow movement
+  int shuffledIndices[cols];
+  for (int i = 0; i < cols; i++) shuffledIndices[i] = i;
+  std::random_shuffle(shuffledIndices, shuffledIndices + cols);
+
+  // Update snow loop from 2nd bottom to top with precomputed random order
+  for (int y = rows - 2; y >= 0; y--) {
+    for (int i = 0; i < cols; i++) {
+      int index = shuffledIndices[i];
+      int x = index % cols;
+      
+      if (!getBitValue(grid, y * cols + x)) continue; // Skip if no snow
+
+      int newX = x;
+      int newY = y + 1;
+
+      if (!random8(20)) { // 5% chance of moving sideways
+        bool left  = x > 0 && !getBitValue(grid, y * cols + x - 1);
+        bool right = x < cols - 1 && !getBitValue(grid, y * cols + x + 1);
+        if (left && right) newX = random8(2) ? x - 1 : x + 1;
+        else if (left)  newX = x - 1;
+        else if (right) newX = x + 1;
+      }
+
+      // If directly down is blocked, try to move diagonally downwards
+      if (getBitValue(grid, newY * cols + newX)) {
+        bool left  = x > 0        && !getBitValue(grid, newY * cols + x - 1);
+        bool right = x < cols - 1 && !getBitValue(grid, newY * cols + x + 1);
+        
+        if (left && right) newX = random8(2) ? x - 1 : x + 1;
+        else if (left)     newX = x - 1;
+        else if (right)    newX = x + 1;   
+        else               newY = y; // Snow is stuck  
+      }
+        
+      if (newY == y && newX == x) { // Snow didn't move. Redraw and continue
+        if (overlay) SEGMENT.setPixelColorXY(x, y, SEGMENT.getPixelColorXY(x, y));
+        continue; 
+      }
+
+      setBitValue(grid, y * cols + x, 0);
+      setBitValue(grid, newY * cols + newX, 1);
+
+      SEGMENT.setPixelColorXY(newX, newY, SEGMENT.getPixelColorXY(x, y));
+      if (!overlay) SEGMENT.setPixelColorXY(x, y, color_blend(SEGMENT.getPixelColorXY(x, y), bgColor, blur));
+    }
+  }
+  
+  // Spawn snow 
+  // SEGMENT.intensity == spawnRate SEGMENT.check1 == usePalette
+  for (int x = 0; x < cols; x++) {
+    if (random8() < SEGMENT.intensity) {
+      setBitValue(grid, x, 1);
+      if (SEGMENT.check1) SEGMENT.setPixelColorXY(x, 0, ColorFromPalette(SEGPALETTE, random8()));
+      else {
+        int c = random8(100,200);
+        SEGMENT.setPixelColorXY(x, 0, CRGB(c,c,c));
+      }
+    }
+  }
+  
+  SEGENV.step = strip.now;
+  return FRAMETIME;
+} // mode_2DSnowFall()
+static const char _data_FX_MODE_2DSNOWFALL[] PROGMEM = "Snow Fall@!,Spawn Rate,Despawn Rate,Blur,,Use Palette,Overlay,,;!,!;!;2;sx=128,ix=16,c1=17,c2=0,o1=0,o2=0";
+
+/////////////////////////
 //     2D Hiphotic     //
 /////////////////////////
 uint16_t mode_2DHiphotic() {                        //  By: ldirko  https://editor.soulmatelights.com/gallery/810 , Modified by: Andrew Tuline
@@ -8599,6 +8711,7 @@ void WS2812FX::setupEffectData() {
   addEffect(FX_MODE_2DSOAP, &mode_2Dsoap, _data_FX_MODE_2DSOAP);
   addEffect(FX_MODE_2DOCTOPUS, &mode_2Doctopus, _data_FX_MODE_2DOCTOPUS);
   addEffect(FX_MODE_2DWAVINGCELL, &mode_2Dwavingcell, _data_FX_MODE_2DWAVINGCELL);
+  addEffect(FX_MODE_2DSNOWFALL, &mode_2DSnowFall, _data_FX_MODE_2DSNOWFALL);
 
   addEffect(FX_MODE_2DAKEMI, &mode_2DAkemi, _data_FX_MODE_2DAKEMI); // audio
 #endif // WLED_DISABLE_2D
