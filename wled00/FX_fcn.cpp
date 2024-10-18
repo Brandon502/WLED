@@ -873,6 +873,7 @@ uint16_t Segment::virtualLength() const {
         break;
       case M12_pArc:
         vLen = sqrt16(vW * vW + vH * vH);
+        if (vW != vH) vLen++; // round up
         break;
       case M12_jMap: //WLEDMM jMap
         if (jMap)
@@ -1241,6 +1242,7 @@ uint32_t __attribute__((hot)) Segment::getPixelColor(int i) const
             if (newX2 + newY2 >= minradius2) return getPixelColorXY(x, y);        
           }
         }
+        return getPixelColorXY(vW-1, vH-1); // Last pixel
         break;
       }
       case M12_jMap: //WLEDMM jMap
