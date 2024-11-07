@@ -5431,6 +5431,281 @@ uint16_t mode_2Dgameoflife(void) { // Written by Ewoud Wijma, inspired by https:
 } // mode_2Dgameoflife()
 static const char _data_FX_MODE_2DGAMEOFLIFE[] PROGMEM = "Game Of Life@!,Color Mutation ☾,Blur ☾,,,All Colors ☾,Overlay BG ☾,Wrap ☾;!,!;!;2;sx=56,ix=2,c1=128,o1=0,o2=0,o3=1"; 
 
+typedef struct Cell {
+    uint8_t currentStatus : 1, futureStatus : 1, currentNeighborCount : 3, futureNeighborCount : 3;
+    uint8_t      edgeCell : 1,    superDead : 1,      oscillatorCheck : 1,      spaceshipCheck : 1, hasColor : 1;
+} Cell;
+
+class GameOfLifeGrid {
+  private:
+    Cell* cells;
+    unsigned cols, rows, maxIndex;
+    int nOffsets[8]; // Neighbor offsets
+    const int offsetX[8] = {-1, 0, 1, -1, 1, -1, 0, 1};
+    const int offsetY[8] = {-1, -1, -1, 0, 0, 1, 1, 1};
+
+  public:
+    GameOfLifeGrid(Cell* data, int c, int r) : cells(data), cols(c), rows(r), maxIndex(r * c) {
+      nOffsets[0] = -cols - 1; nOffsets[1] = -cols; nOffsets[2] = -cols + 1;
+      nOffsets[3] = -1;        /*cell*/             nOffsets[4] = 1;
+      nOffsets[5] = cols - 1;  nOffsets[6] = cols;  nOffsets[7] = cols + 1;
+    }
+    void getNeighborIndexes(unsigned neighbors[9], unsigned cIndex, unsigned x, unsigned y, bool wrap) {
+      bool edgeCell = cells[cIndex].edgeCell;
+      unsigned neighborCount = 0;
+      for (unsigned i = 0; i < 8; ++i) {
+        unsigned nIndex = cIndex + nOffsets[i];
+        if (edgeCell) {
+          int nX = x + offsetX[i], nY = y + offsetY[i];
+          if      (nX < 0)     {if (!wrap) continue; nIndex += cols;}
+          else if (nX >= cols) {if (!wrap) continue; nIndex -= cols;}
+          if      (nY < 0)     {if (!wrap) continue; nIndex += maxIndex;}
+          else if (nY >= rows) {if (!wrap) continue; nIndex -= maxIndex;}
+        }
+        neighbors[++neighborCount] = nIndex;
+      }
+      neighbors[0] = neighborCount;
+    }
+
+    void setCell(unsigned cIndex, unsigned x, unsigned y, bool alive, bool wrap) {
+      Cell* cell = &cells[cIndex];
+      cell->futureStatus = alive;
+      if (alive == cell->currentStatus) return; // No change
+      unsigned neighbors[9];
+      getNeighborIndexes(neighbors, cIndex, x, y, wrap);
+      int val = alive ? 1 : -1;
+      for (unsigned i = 1; i <= neighbors[0]; ++i) cells[neighbors[i]].futureNeighborCount += val;
+    }
+
+    void recalculateNeighbors(bool wrap, bool edgesOnly) {
+      unsigned cIndex = 0;
+      for (unsigned y = 0; y < rows; ++y) for (unsigned x = 0; x < cols; ++x, ++cIndex) {
+        Cell* cell = &cells[cIndex];
+        if (!edgesOnly || cell->edgeCell) {
+          cell->futureNeighborCount  = 0;
+          cell->currentNeighborCount = 0;
+          cell->superDead = 0;
+
+          unsigned neighbors[9];
+          getNeighborIndexes(neighbors, cIndex, x, y, wrap);
+
+          for (unsigned i = 1; i <= neighbors[0]; ++i) {
+            if (cells[neighbors[i]].currentStatus) { ++cell->futureNeighborCount; ++cell->currentNeighborCount; }
+          }
+        }
+      }
+    }
+
+    void shiftFutureToCurrent() {
+      for (unsigned i = 0; i < maxIndex; ++i) {
+        cells[i].currentStatus        = cells[i].futureStatus;
+        cells[i].currentNeighborCount = cells[i].futureNeighborCount;
+      }
+    }
+};
+
+uint16_t mode_2Dgameoflife2(void) { // Written by Ewoud Wijma, inspired by https://natureofcode.com/book/chapter-7-cellular-automata/ 
+                                   // and https://github.com/DougHaber/nlife-color , Modified By: Brandon Butler
+  if (!strip.isMatrix) return mode_static(); // not a 2D set-up
+
+  const uint16_t cols = SEGMENT.virtualWidth();
+  const uint16_t rows = SEGMENT.virtualHeight();
+  const size_t dataSize  = SEGMENT.length() * sizeof(Cell); // Cell = 2 bytes
+  const size_t totalSize = dataSize + 5; // 5 bytes for gridCheck, prevPalette, soloGlider, prevWrap, overrideWrap
+
+  if (!SEGENV.allocateData(totalSize)) return mode_static(); //allocation failed
+  uint8_t  *gridCheck    = reinterpret_cast<uint8_t*>(SEGENV.data);
+  uint8_t  *prevPalette  = reinterpret_cast<uint8_t*>(SEGENV.data + 1);
+  bool     *soloGlider   = reinterpret_cast<bool*>   (SEGENV.data + 2);
+  bool     *prevWrap     = reinterpret_cast<bool*>   (SEGENV.data + 3);
+  bool     *overrideWrap = reinterpret_cast<bool*>   (SEGENV.data + 4);
+  Cell     *cells        = reinterpret_cast<Cell*>   (SEGENV.data + 5);
+
+  uint16_t& generation   = SEGENV.aux0; //Rename SEGENV/SEGMENT variables for readability
+  uint16_t& gliderLength = SEGENV.aux1;
+  bool allColors   = SEGMENT.check1;
+  bool overlayBG   = SEGMENT.check2;
+  bool wrap        = SEGMENT.check3;
+  bool bgBlendMode = SEGMENT.custom1 > 220 && !overlayBG; // if blur is high and not overlaying, use bg blend mode
+  byte blur        = overlayBG ? 255 : bgBlendMode ? map2(SEGMENT.custom1 - 220, 0, 35, 255, 128) : map2(SEGMENT.custom1, 0, 220, 255, 10);
+  uint32_t bgColor = SEGCOLOR(1);
+  uint32_t color   = allColors ? random16() * random16() : SEGMENT.color_from_palette(0, false, PALETTE_SOLID_WRAP, 0);
+
+  GameOfLifeGrid grid(cells, cols, rows);
+
+  bool setup = SEGENV.call == 0;
+  // If mirror, reverse, or transpose changes neighbors and edge cells need to be recalculated (leads to infinite games/crashes)
+  uint8_t checkSum = (SEGMENT.mirror    ? (1 << 1) : 0) ^
+                     (SEGMENT.mirror_y  ? (1 << 2) : 0) ^
+                     (SEGMENT.reverse   ? (1 << 3) : 0) ^
+                     (SEGMENT.reverse_y ? (1 << 4) : 0) ^
+                     (SEGMENT.transpose ? (1 << 5) : 0);
+  if (checkSum != *gridCheck) { *gridCheck = checkSum; setup = true; } // Segment config changed, setup new game
+
+  if (setup) {
+    SEGMENT.setUpLeds();
+    SEGMENT.fill(BLACK); // to make sure that segment buffer and physical leds are aligned initially
+    SEGENV.step = 0;
+
+    // Calculate glider length LCM(rows,cols)*4 once
+    uint8_t a = rows;
+    uint8_t b = cols;
+    while (b) {
+      uint8_t t = b;
+      b = a % b;
+      a = t;
+    }
+    gliderLength = cols * rows / a * 4;
+  }
+
+  if (abs(long(strip.now) - long(SEGENV.step)) > 2000) SEGENV.step = 0; // Timebase jump fix
+  bool paused = SEGENV.step > strip.now;
+
+  // Setup New Game of Life
+  if ((!paused && generation == 0) || setup) {
+    SEGENV.step = strip.now + 1250; // show initial state for 1.25 seconds
+    if (SEGMENT.speed == 255) {SEGMENT.fill(BLACK); SEGENV.step = strip.now;} // Instant start
+    paused = true;
+    generation = 1;
+    *overrideWrap = false;
+    *prevWrap = wrap;
+    *prevPalette = SEGMENT.palette;
+
+    //Setup Grid
+    memset(cells, 0, dataSize);
+
+    uint32_t threshold = 1374389534; // ~32% of 32-bit max
+    unsigned cIndex = 0;
+    for (unsigned y = 0; y < rows; ++y) for (unsigned x = 0; x < cols; ++x, ++cIndex) {
+      if (x == 0 || x == cols - 1 || y == 0 || y == rows - 1) cells[cIndex].edgeCell = 1;
+      if (esp_random() < threshold) grid.setCell(cIndex, x, y, true, wrap);
+      else { cells[cIndex].hasColor = 1; cells[cIndex].superDead = 1; }
+    }
+    grid.shiftFutureToCurrent(); // Shift future states to current states
+  }
+
+  bool palChanged = SEGMENT.palette != *prevPalette && !allColors;
+  if (palChanged) *prevPalette = SEGMENT.palette;
+
+  // Enter redraw loop if not updating or palette changed.
+  if (palChanged || paused || (SEGMENT.speed < 254 && strip.now - SEGENV.step < 1000 / map2(SEGMENT.speed,0,253,1,60))) { //(1 - 60) updates/sec 255 is uncapped
+    // Redraw if paused (remove blur), palette changed, overlaying background (avoid flicker) 
+    // Generation 1 draws alive cells randomly and fades dead cells
+    bool blurDead = paused && blur !=255 && !bgBlendMode;
+    bool newGame  = generation == 1;
+    if (blurDead || newGame || palChanged || overlayBG) {
+      unsigned cIndex = 0;
+      for (unsigned y = 0; y < rows; ++y) for (unsigned x = 0; x < cols; ++x, ++cIndex) {
+        Cell& cell = cells[cIndex];
+        if (!newGame && cell.superDead) continue; // Skip super dead cells unless new game
+        bool alive = cell.currentStatus;
+        uint32_t cellColor = SEGMENT.getPixelColorXY(x,y);
+        if (alive) {
+          if ((!cell.hasColor && (!random(10) || SEGMENT.speed == 255)) || palChanged) {                     // Palette changed or needs initial color
+            uint32_t randomColor = allColors ? random16() * random16() : SEGMENT.color_from_palette(random8(), false, PALETTE_SOLID_WRAP, 0);
+            SEGMENT.setPixelColorXY(x,y, randomColor);
+            cells[cIndex].hasColor = 1;
+          }
+          else if (overlayBG && cell.hasColor) SEGMENT.setPixelColorXY(x,y, cellColor);                      // Redraw alive cells for overlayBG
+        } // Dead
+        else if (blurDead)              SEGMENT.setPixelColorXY(x,y, color_blend(cellColor, bgColor, blur)); // Blur dead cells
+        else if (!overlayBG && newGame) SEGMENT.setPixelColorXY(x,y, color_blend(cellColor, bgColor, 16));   // Fade dead cells on generation 1
+      }
+    }
+    return FRAMETIME;
+  }
+  static unsigned long startTime;
+  if (generation == 1) startTime = strip.now;
+
+  if (generation <= 8) blur = 255 - (((generation-1) * (255 - blur)) >> 3); // Ramp up blur for first 8 generations
+
+  //Update Game of Life
+  bool disableWrap = !wrap || *overrideWrap || (generation % 1500 == 0 || *soloGlider); // Disable wrap every 1500 generations to prevent undetected repeats
+  if (*prevWrap != !disableWrap) { grid.recalculateNeighbors(!disableWrap, true); *prevWrap = !disableWrap; }
+  // Repeat detection
+  unsigned aliveCount = 0; // Detects empty grids and solo gliders (smaller grids)
+  bool updateOscillator = generation % 16 == 0;
+  bool updateSpaceship  = gliderLength && generation % gliderLength == 0;
+  bool repeatingOscillator = true, repeatingSpaceship = true;
+
+  //Loop through all cells. Apply rules, setPixel
+  unsigned cIndex = 0;
+  for (unsigned y = 0; y < rows; ++y) for (unsigned x = 0; x < cols; ++x, ++cIndex) {
+    Cell& cell = cells[cIndex];
+    if (repeatingOscillator && cell.oscillatorCheck != cell.currentStatus) repeatingOscillator = false;
+    if (repeatingSpaceship  && cell.spaceshipCheck  != cell.currentStatus) repeatingSpaceship  = false;
+    if (updateOscillator) cell.oscillatorCheck = cell.currentStatus;
+    if (updateSpaceship)  cell.spaceshipCheck  = cell.currentStatus;
+
+    unsigned neighbors = cell.currentNeighborCount;
+    if (cell.superDead && neighbors != 3) continue; // Skip super dead cells (bgColor dead cells)
+
+    bool     cellValue = cell.currentStatus;
+    uint32_t cellColor = SEGMENT.getPixelColorXY(x, y);
+    
+    if (cellValue) {
+      ++aliveCount;
+      if (cellColor != bgColor) color = cellColor; // Update last seen color
+      if (neighbors < 2 || neighbors > 3) {
+        // Loneliness or Overpopulation
+        grid.setCell(cIndex, x, y, false, !disableWrap);
+        if (!overlayBG) SEGMENT.setPixelColorXY(x,y, blur == 255 ? bgColor : color_blend(cellColor, bgColor, blur));
+        if (blur == 255) cell.superDead = 1;
+      }
+      else SEGMENT.setPixelColorXY(x, y, cellColor == bgColor ? color : cellColor); // Redraw alive
+    }
+    else if (neighbors == 3 && !cellValue) {
+      // Reproduction
+      grid.setCell(cIndex, x, y, true, !disableWrap);
+      cell.superDead = 0;
+      uint32_t birthColor = color;
+      if (random8() < SEGMENT.intensity) birthColor = allColors ? random16() * random16() : SEGMENT.color_from_palette(random8(), false, PALETTE_SOLID_WRAP, 0);
+      else {
+        // Get Colors
+        uint32_t nColors[8];
+        unsigned colorCount = 0;
+        unsigned neighbors[9];
+        grid.getNeighborIndexes(neighbors, cIndex, x, y, !disableWrap);
+
+        for (unsigned i = 1; i <= neighbors[0]; ++i) {
+          unsigned nIndex = neighbors[i];
+          if (cells[nIndex].futureStatus) {
+            uint32_t nColor = SEGMENT.getPixelColorXY(nIndex % cols, nIndex / cols);
+            if (nColor == bgColor) continue;
+            nColors[colorCount++] = nColor;
+          }
+        }    
+        if (colorCount) { birthColor = nColors[random8(colorCount)]; color = birthColor; }
+      }
+      SEGMENT.setPixelColorXY(x,y, birthColor);
+    }
+    else { // Already dead
+      if (blur != 255 && !overlayBG && !bgBlendMode) {
+        uint32_t blended = color_blend(cellColor, bgColor, blur); // color_blend doesn't always converge to bgColor (this fix needed for fast fps with custom bgColor)
+        if (blended == cellColor) { blended = bgColor; cell.superDead = 1; }
+        SEGMENT.setPixelColorXY(x, y, blended);
+      }
+    }
+  }
+
+  grid.shiftFutureToCurrent();
+
+  if (aliveCount == 5) *soloGlider = true; else *soloGlider = false;
+  if (repeatingSpaceship) *overrideWrap = true; // Spaceship detected, disable wrap til next game
+  if (repeatingOscillator || !aliveCount) {
+    unsigned long timeTaken = strip.now - startTime;
+    printf("%dx%d Generations: %5d Time: %5.2fs Average FPS: %f\n", cols, rows, generation, timeTaken/1000.0, (float)generation / (timeTaken / 1000.0));
+    generation = 0;      // reset on next call
+    SEGENV.step += 1000; // pause final generation for 1 second
+    return FRAMETIME;
+  }
+
+  ++generation;
+  SEGENV.step = strip.now;
+  return FRAMETIME;
+} // mode_2Dgameoflife2()
+static const char _data_FX_MODE_2DGAMEOFLIFE2[] PROGMEM = "Game Of Life2@!,Color Mutation ☾,Blur ☾,,,All Colors ☾,Overlay BG ☾,Wrap ☾;!,!;!;2;sx=56,ix=2,c1=128,o1=0,o2=0,o3=1"; 
+
 /////////////////////////
 //     2D SnowFall     //
 /////////////////////////
@@ -8978,6 +9253,7 @@ void WS2812FX::setupEffectData() {
   addEffect(FX_MODE_2DOCTOPUS, &mode_2Doctopus, _data_FX_MODE_2DOCTOPUS);
   addEffect(FX_MODE_2DWAVINGCELL, &mode_2Dwavingcell, _data_FX_MODE_2DWAVINGCELL);
   addEffect(FX_MODE_2DSNOWFALL, &mode_2DSnowFall, _data_FX_MODE_2DSNOWFALL);
+  addEffect(FX_MODE_2DGAMEOFLIFE2, &mode_2Dgameoflife2, _data_FX_MODE_2DGAMEOFLIFE2);
 
   addEffect(FX_MODE_2DAKEMI, &mode_2DAkemi, _data_FX_MODE_2DAKEMI); // audio
 
