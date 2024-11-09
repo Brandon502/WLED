@@ -5243,7 +5243,6 @@ class GameOfLifeGrid {
     int nOffsets[8]; // Neighbor offsets
     const int offsetX[8] = {-1, 0, 1, -1, 1, -1, 0, 1};
     const int offsetY[8] = {-1, -1, -1, 0, 0, 1, 1, 1};
-
   public:
     GameOfLifeGrid(Cell* data, int c, int r) : cells(data), cols(c), rows(r), maxIndex(r * c) {
       nOffsets[0] = -cols - 1; nOffsets[1] = -cols; nOffsets[2] = -cols + 1;
@@ -5266,7 +5265,6 @@ class GameOfLifeGrid {
       }
       neighbors[0] = neighborCount;
     }
-
     void setCell(unsigned cIndex, unsigned x, unsigned y, bool alive, bool wrap) {
       Cell* cell = &cells[cIndex];
       cell->futureStatus = alive;
@@ -5276,7 +5274,6 @@ class GameOfLifeGrid {
       int val = alive ? 1 : -1;
       for (unsigned i = 1; i <= neighbors[0]; ++i) cells[neighbors[i]].futureNeighborCount += val;
     }
-
     void recalculateEdgeNeighbors(bool wrap) {
       unsigned cIndex = 0;
       for (unsigned y = 0; y < rows; ++y) for (unsigned x = 0; x < cols; ++x, ++cIndex) {
@@ -5295,7 +5292,6 @@ class GameOfLifeGrid {
         }
       }
     }
-
     void shiftFutureToCurrent() {
       for (unsigned i = 0; i < maxIndex; ++i) {
         cells[i].currentStatus        = cells[i].futureStatus;
@@ -5314,12 +5310,12 @@ uint16_t mode_2Dgameoflife(void) { // Written by Ewoud Wijma, inspired by https:
   const size_t totalSize = dataSize + 5; // 5 bytes for prevRows, prevCols, prevPalette, prevWrap, soloGlider
 
   if (!SEGENV.allocateData(totalSize)) return mode_static(); //allocation failed
-  uint8_t  *prevRows     = reinterpret_cast<uint8_t*>(SEGENV.data);
-  uint8_t  *prevCols     = reinterpret_cast<uint8_t*>(SEGENV.data + 1);
-  uint8_t  *prevPalette  = reinterpret_cast<uint8_t*>(SEGENV.data + 2);
-  bool     *prevWrap     = reinterpret_cast<bool*>   (SEGENV.data + 3);
-  bool     *soloGlider   = reinterpret_cast<bool*>   (SEGENV.data + 4);
-  Cell     *cells        = reinterpret_cast<Cell*>   (SEGENV.data + 5);
+  uint8_t  *prevRows    = reinterpret_cast<uint8_t*>(SEGENV.data);
+  uint8_t  *prevCols    = reinterpret_cast<uint8_t*>(SEGENV.data + 1);
+  uint8_t  *prevPalette = reinterpret_cast<uint8_t*>(SEGENV.data + 2);
+  bool     *prevWrap    = reinterpret_cast<bool*>   (SEGENV.data + 3);
+  bool     *soloGlider  = reinterpret_cast<bool*>   (SEGENV.data + 4);
+  Cell     *cells       = reinterpret_cast<Cell*>   (SEGENV.data + 5);
 
   uint16_t& generation   = SEGENV.aux0; //Rename SEGENV/SEGMENT variables for readability
   uint16_t& gliderLength = SEGENV.aux1;
@@ -5359,7 +5355,6 @@ uint16_t mode_2Dgameoflife(void) { // Written by Ewoud Wijma, inspired by https:
   // Setup New Game of Life
   if ((!paused && generation == 0) || setup) {
     SEGENV.step = strip.now + 1250; // show initial state for 1.25 seconds
-    if (SEGMENT.speed == 255) {SEGMENT.fill(BLACK); SEGENV.step = strip.now;} // Instant start
     paused = true;
     generation = 1;
     *prevWrap = wrap;
@@ -5387,7 +5382,7 @@ uint16_t mode_2Dgameoflife(void) { // Written by Ewoud Wijma, inspired by https:
   if (palChanged) *prevPalette = SEGMENT.palette;
 
   // Enter redraw loop if not updating or palette changed.
-  if (palChanged || paused || (SEGMENT.speed < 254 && strip.now - SEGENV.step < 1000 / map2(SEGMENT.speed,0,253,1,60))) { //(1 - 60) updates/sec 255 is uncapped
+  if (palChanged || paused || (SEGMENT.speed != 255 && strip.now - SEGENV.step < 1000 / map2(SEGMENT.speed,0,254,1,60))) { //(1 - 60) updates/sec 255 is uncapped
     // Redraw if paused (remove blur), palette changed, overlaying background if not max speed (avoid flicker) 
     // Generation 1 draws alive cells randomly and fades dead cells
     bool blurDead = paused && blur != 255 && !bgBlendMode;
@@ -5400,9 +5395,9 @@ uint16_t mode_2Dgameoflife(void) { // Written by Ewoud Wijma, inspired by https:
         bool alive = cell.currentStatus;
         uint32_t cellColor = SEGMENT.getPixelColorXY(x,y);
         if (alive) {
-          if ((!cell.hasColor && (!random(10) || SEGMENT.speed == 255)) || palChanged) {                     // Palette changed or needs initial color
+          if ((!cell.hasColor && !random(10)) || palChanged) {
             uint32_t randomColor = allColors ? random16() * random16() : SEGMENT.color_from_palette(random8(), false, PALETTE_SOLID_WRAP, 0);
-            SEGMENT.setPixelColorXY(x,y, randomColor);
+            SEGMENT.setPixelColorXY(x,y, randomColor);                                                       // Palette changed or needs initial color
             cells[cIndex].hasColor = 1;
           }
           else if (overlayBG && cell.hasColor) SEGMENT.setPixelColorXY(x,y, cellColor);                      // Redraw alive cells for overlayBG
@@ -5413,10 +5408,8 @@ uint16_t mode_2Dgameoflife(void) { // Written by Ewoud Wijma, inspired by https:
     }
     return FRAMETIME;
   }
-  static unsigned long startTime;
-  if (generation == 1) startTime = strip.now;
 
-  uint32_t color   = allColors ? random16() * random16() : SEGMENT.color_from_palette(0, false, PALETTE_SOLID_WRAP, 0);
+  uint32_t color = allColors ? random16() * random16() : SEGMENT.color_from_palette(0, false, PALETTE_SOLID_WRAP, 0); // Backup color
   if (generation <= 8) blur = 255 - (((generation-1) * (255 - blur)) >> 3); // Ramp up blur for first 8 generations
 
   //Update Game of Life
@@ -5492,8 +5485,6 @@ uint16_t mode_2Dgameoflife(void) { // Written by Ewoud Wijma, inspired by https:
 
   if (aliveCount == 5) *soloGlider = true; else *soloGlider = false;
   if (repeatingOscillator || repeatingSpaceship || !aliveCount) {
-    unsigned long timeTaken = strip.now - startTime;
-    printf("%dx%d Generations: %5d Time: %5.2fs Average FPS: %f\n", cols, rows, generation, timeTaken/1000.0, (float)generation / (timeTaken / 1000.0));
     generation = 0;      // reset on next call
     SEGENV.step += 1000; // pause final generation for 1 second
     return FRAMETIME;
