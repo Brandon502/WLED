@@ -5432,8 +5432,9 @@ uint16_t mode_2Dgameoflife(void) { // Written by Ewoud Wijma, inspired by https:
 static const char _data_FX_MODE_2DGAMEOFLIFE[] PROGMEM = "Game Of Life@!,Color Mutation ☾,Blur ☾,,,All Colors ☾,Overlay BG ☾,Wrap ☾;!,!;!;2;sx=56,ix=2,c1=128,o1=0,o2=0,o3=1"; 
 
 typedef struct Cell {
-    uint8_t currentStatus : 1, futureStatus : 1, currentNeighborCount : 3, futureNeighborCount : 3;
-    uint8_t      edgeCell : 1,    superDead : 1,      oscillatorCheck : 1,      spaceshipCheck : 1, hasColor : 1;
+    uint16_t currentStatus : 1, futureStatus : 1, currentNeighborCount : 4, futureNeighborCount : 4,
+                  edgeCell : 1,    superDead : 1,      oscillatorCheck : 1,      spaceshipCheck : 1, 
+                  hasColor : 1;
 } Cell;
 
 class GameOfLifeGrid {
@@ -5477,11 +5478,11 @@ class GameOfLifeGrid {
       for (unsigned i = 1; i <= neighbors[0]; ++i) cells[neighbors[i]].futureNeighborCount += val;
     }
 
-    void recalculateNeighbors(bool wrap, bool edgesOnly) {
+    void recalculateEdgeNeighbors(bool wrap) {
       unsigned cIndex = 0;
       for (unsigned y = 0; y < rows; ++y) for (unsigned x = 0; x < cols; ++x, ++cIndex) {
         Cell* cell = &cells[cIndex];
-        if (!edgesOnly || cell->edgeCell) {
+        if (cell->edgeCell) {
           cell->futureNeighborCount  = 0;
           cell->currentNeighborCount = 0;
           cell->superDead = 0;
@@ -5511,14 +5512,14 @@ uint16_t mode_2Dgameoflife2(void) { // Written by Ewoud Wijma, inspired by https
   const uint16_t cols = SEGMENT.virtualWidth();
   const uint16_t rows = SEGMENT.virtualHeight();
   const size_t dataSize  = SEGMENT.length() * sizeof(Cell); // Cell = 2 bytes
-  const size_t totalSize = dataSize + 5; // 5 bytes for gridCheck, prevPalette, soloGlider, prevWrap, overrideWrap
+  const size_t totalSize = dataSize + 5; // 5 bytes for prevRows, prevCols, prevPalette, prevWrap, soloGlider
 
   if (!SEGENV.allocateData(totalSize)) return mode_static(); //allocation failed
-  uint8_t  *gridCheck    = reinterpret_cast<uint8_t*>(SEGENV.data);
-  uint8_t  *prevPalette  = reinterpret_cast<uint8_t*>(SEGENV.data + 1);
-  bool     *soloGlider   = reinterpret_cast<bool*>   (SEGENV.data + 2);
+  uint8_t  *prevRows     = reinterpret_cast<uint8_t*>(SEGENV.data);
+  uint8_t  *prevCols     = reinterpret_cast<uint8_t*>(SEGENV.data + 1);
+  uint8_t  *prevPalette  = reinterpret_cast<uint8_t*>(SEGENV.data + 2);
   bool     *prevWrap     = reinterpret_cast<bool*>   (SEGENV.data + 3);
-  bool     *overrideWrap = reinterpret_cast<bool*>   (SEGENV.data + 4);
+  bool     *soloGlider   = reinterpret_cast<bool*>   (SEGENV.data + 4);
   Cell     *cells        = reinterpret_cast<Cell*>   (SEGENV.data + 5);
 
   uint16_t& generation   = SEGENV.aux0; //Rename SEGENV/SEGMENT variables for readability
@@ -5529,23 +5530,18 @@ uint16_t mode_2Dgameoflife2(void) { // Written by Ewoud Wijma, inspired by https
   bool bgBlendMode = SEGMENT.custom1 > 220 && !overlayBG; // if blur is high and not overlaying, use bg blend mode
   byte blur        = overlayBG ? 255 : bgBlendMode ? map2(SEGMENT.custom1 - 220, 0, 35, 255, 128) : map2(SEGMENT.custom1, 0, 220, 255, 10);
   uint32_t bgColor = SEGCOLOR(1);
-  uint32_t color   = allColors ? random16() * random16() : SEGMENT.color_from_palette(0, false, PALETTE_SOLID_WRAP, 0);
 
   GameOfLifeGrid grid(cells, cols, rows);
 
-  bool setup = SEGENV.call == 0;
-  // If mirror, reverse, or transpose changes neighbors and edge cells need to be recalculated (leads to infinite games/crashes)
-  uint8_t checkSum = (SEGMENT.mirror    ? (1 << 1) : 0) ^
-                     (SEGMENT.mirror_y  ? (1 << 2) : 0) ^
-                     (SEGMENT.reverse   ? (1 << 3) : 0) ^
-                     (SEGMENT.reverse_y ? (1 << 4) : 0) ^
-                     (SEGMENT.transpose ? (1 << 5) : 0);
-  if (checkSum != *gridCheck) { *gridCheck = checkSum; setup = true; } // Segment config changed, setup new game
+  // If rows or cols change due to mirror/transpose, edges and neighbor counts need to be recalculated. Just reset the game.
+  bool setup = SEGENV.call == 0 || rows != *prevRows || cols != *prevCols;
 
   if (setup) {
     SEGMENT.setUpLeds();
     SEGMENT.fill(BLACK); // to make sure that segment buffer and physical leds are aligned initially
     SEGENV.step = 0;
+    *prevRows = rows;
+    *prevCols = cols;
 
     // Calculate glider length LCM(rows,cols)*4 once
     uint8_t a = rows;
@@ -5567,18 +5563,22 @@ uint16_t mode_2Dgameoflife2(void) { // Written by Ewoud Wijma, inspired by https
     if (SEGMENT.speed == 255) {SEGMENT.fill(BLACK); SEGENV.step = strip.now;} // Instant start
     paused = true;
     generation = 1;
-    *overrideWrap = false;
     *prevWrap = wrap;
     *prevPalette = SEGMENT.palette;
 
     //Setup Grid
     memset(cells, 0, dataSize);
-
-    uint32_t threshold = 1374389534; // ~32% of 32-bit max
+    #if !ESP32
+      random16_set_seed(strip.now>>2); //seed the random generator
+    #endif
     unsigned cIndex = 0;
     for (unsigned y = 0; y < rows; ++y) for (unsigned x = 0; x < cols; ++x, ++cIndex) {
       if (x == 0 || x == cols - 1 || y == 0 || y == rows - 1) cells[cIndex].edgeCell = 1;
-      if (esp_random() < threshold) grid.setCell(cIndex, x, y, true, wrap);
+      #if ESP32
+        if (esp_random() < 1374389534) grid.setCell(cIndex, x, y, true, wrap); // ~32% chance of being alive
+      #else
+        if (random16(100) < 32) grid.setCell(cIndex, x, y, true, wrap);
+      #endif
       else { cells[cIndex].hasColor = 1; cells[cIndex].superDead = 1; }
     }
     grid.shiftFutureToCurrent(); // Shift future states to current states
@@ -5589,9 +5589,9 @@ uint16_t mode_2Dgameoflife2(void) { // Written by Ewoud Wijma, inspired by https
 
   // Enter redraw loop if not updating or palette changed.
   if (palChanged || paused || (SEGMENT.speed < 254 && strip.now - SEGENV.step < 1000 / map2(SEGMENT.speed,0,253,1,60))) { //(1 - 60) updates/sec 255 is uncapped
-    // Redraw if paused (remove blur), palette changed, overlaying background (avoid flicker) 
+    // Redraw if paused (remove blur), palette changed, overlaying background if not max speed (avoid flicker) 
     // Generation 1 draws alive cells randomly and fades dead cells
-    bool blurDead = paused && blur !=255 && !bgBlendMode;
+    bool blurDead = paused && blur != 255 && !bgBlendMode;
     bool newGame  = generation == 1;
     if (blurDead || newGame || palChanged || overlayBG) {
       unsigned cIndex = 0;
@@ -5617,13 +5617,14 @@ uint16_t mode_2Dgameoflife2(void) { // Written by Ewoud Wijma, inspired by https
   static unsigned long startTime;
   if (generation == 1) startTime = strip.now;
 
+  uint32_t color   = allColors ? random16() * random16() : SEGMENT.color_from_palette(0, false, PALETTE_SOLID_WRAP, 0);
   if (generation <= 8) blur = 255 - (((generation-1) * (255 - blur)) >> 3); // Ramp up blur for first 8 generations
 
   //Update Game of Life
-  bool disableWrap = !wrap || *overrideWrap || (generation % 1500 == 0 || *soloGlider); // Disable wrap every 1500 generations to prevent undetected repeats
-  if (*prevWrap != !disableWrap) { grid.recalculateNeighbors(!disableWrap, true); *prevWrap = !disableWrap; }
+  bool disableWrap = !wrap || generation % 1500 == 0 || *soloGlider; // Disable wrap every 1500 generations to prevent undetected repeats
+  if (*prevWrap != !disableWrap) { grid.recalculateEdgeNeighbors(!disableWrap); *prevWrap = !disableWrap; }
   // Repeat detection
-  unsigned aliveCount = 0; // Detects empty grids and solo gliders (smaller grids)
+  unsigned aliveCount = 0; // Detects empty grids and solo gliders (for smaller grids)
   bool updateOscillator = generation % 16 == 0;
   bool updateSpaceship  = gliderLength && generation % gliderLength == 0;
   bool repeatingOscillator = true, repeatingSpaceship = true;
@@ -5691,8 +5692,7 @@ uint16_t mode_2Dgameoflife2(void) { // Written by Ewoud Wijma, inspired by https
   grid.shiftFutureToCurrent();
 
   if (aliveCount == 5) *soloGlider = true; else *soloGlider = false;
-  if (repeatingSpaceship) *overrideWrap = true; // Spaceship detected, disable wrap til next game
-  if (repeatingOscillator || !aliveCount) {
+  if (repeatingOscillator || repeatingSpaceship || !aliveCount) {
     unsigned long timeTaken = strip.now - startTime;
     printf("%dx%d Generations: %5d Time: %5.2fs Average FPS: %f\n", cols, rows, generation, timeTaken/1000.0, (float)generation / (timeTaken / 1000.0));
     generation = 0;      // reset on next call
