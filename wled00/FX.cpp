@@ -5645,6 +5645,71 @@ uint16_t mode_2DSnowFall(void) { // By: Brandon Butler
 } // mode_2DSnowFall()
 static const char _data_FX_MODE_2DSNOWFALL[] PROGMEM = "Snow Fall ☾@!,Spawn Rate,Despawn Rate,Blur,Sway Chance,Use Palette,Inverted Overlay,Prevent Overflow,;!,!;!;2;sx=128,ix=16,c1=17,c2=0,c3=0,o1=0,o2=0,o3=1";
 
+uint16_t mode_2DPixelCrash() {
+  int cols = SEGMENT.virtualWidth();
+  int rows = SEGMENT.virtualHeight();
+
+  if (!strip.isMatrix) return mode_static(); // not a 2D set-up
+  if (!SEGENV.allocateData(cols * sizeof(uint32_t))) return mode_static(); // Allocation failed
+
+  uint32_t *noiseOffsets = reinterpret_cast<uint32_t*>(SEGENV.data);
+
+  if (SEGENV.call == 0) {
+    SEGMENT.setUpLeds();
+    SEGMENT.fill(BLACK);
+    SEGMENT.step = 0;
+    
+    for (int i = 0; i < cols; i++) {
+      noiseOffsets[i] = random16(); // Random starting points for each column
+    }
+  }
+
+  if (strip.now - SEGENV.step < 1000 / map2(SEGMENT.speed,0,255,1,60)) return FRAMETIME; // 1 - 60 updates/sec
+
+  int input = SEGMENT.intensity;
+  float brightness = mapf(input, 0, 255, 0.1, 1.0);  // Adjust brightness range if needed
+
+  uint32_t color1 = RED;
+  uint32_t color2 = WHITE;
+
+  // uint32_t color1 = SEGCOLOR(0);
+  // uint32_t color2 = SEGCOLOR(1);
+
+  // Adjust intensity so it reaches up to 95% of matrix height when input is 255
+  float intensity = mapf(input, 0, 255, 0.5, rows * 0.95);
+
+  // Scale flickering effect based on input value
+  float flickerAmplitude = mapf(input, 0, 255, 0.05, 0.5); // Less flicker at 0, more at 255
+
+  for (int x = 0; x < cols; x++) {
+    // Add column-specific flicker to intensity
+    uint8_t noiseValue = inoise8(noiseOffsets[x] * strip.now); // Scale offset
+    float noiseMapped = mapf(noiseValue, 0, 255, -0.5, 0.5);
+    float columnIntensity = intensity * (1.0 + flickerAmplitude * noiseMapped);
+
+    noiseOffsets[x] += 10; // Control flicker speed per column
+
+    for (int y = 0; y < rows; y++) {
+      // Calculate the fade amount for each pixel based on column-specific intensity
+      int fadeFactor = constrain(mapf(y, 0, columnIntensity, 0, 180), 0, 255);
+
+      // Interpolate between color1 and color2
+      uint32_t blendedColor = color_blend(color1, color2, fadeFactor);
+      SEGMENT.setPixelColorXY(x, y, blendedColor);
+
+      // uint32_t w1 = W(blendedColor) * brightness;
+      // uint32_t r1 = R(blendedColor) * brightness;
+      // uint32_t g1 = G(blendedColor) * brightness;
+      // uint32_t b1 = B(blendedColor) * brightness;
+      // SEGMENT.setPixelColorXY(x, y, RGBW32(r1, g1, b1, w1));
+    }
+  }
+  SEGENV.step = strip.now;
+  return FRAMETIME;
+} // mode_2DPixelCrash()
+static const char _data_FX_MODE_2DPIXELCRASH[] PROGMEM = "Pixel Crash@!,Intensity,,,,;!,!;!;2";
+
+
 /////////////////////////
 //     2D Hiphotic     //
 /////////////////////////
@@ -9088,6 +9153,7 @@ void WS2812FX::setupEffectData() {
   addEffect(FX_MODE_2DOCTOPUS, &mode_2Doctopus, _data_FX_MODE_2DOCTOPUS);
   addEffect(FX_MODE_2DWAVINGCELL, &mode_2Dwavingcell, _data_FX_MODE_2DWAVINGCELL);
   addEffect(FX_MODE_2DSNOWFALL, &mode_2DSnowFall, _data_FX_MODE_2DSNOWFALL);
+  addEffect(FX_MODE_2DPIXELCRASH, &mode_2DPixelCrash, _data_FX_MODE_2DPIXELCRASH);
 
   addEffect(FX_MODE_2DAKEMI, &mode_2DAkemi, _data_FX_MODE_2DAKEMI); // audio
 
