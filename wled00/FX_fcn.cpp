@@ -959,8 +959,12 @@ void IRAM_ATTR_YN __attribute__((hot)) Segment::setPixelColor(int i, uint32_t co
         if (vStrip>0) setPixelColorXY(vStrip - 1, vH - i - 1, col);
         else drawLine(0,vH-i-1, vW-1,vH-i-1, col, false); // WLEDMM draw line instead of plotting each pixel
         break;
-      case M12_pArc: {                
-        if (i == 0) { setPixelColorXY(0, 0, col); break; } // center pixel
+      case M12_pArc: {
+        if (i < 3) { // mimic old behavior 
+          if      (i == 0) { setPixelColorXY(0, 0, col); break; }
+          else if (i == 1) { setPixelColorXY(0, 1, col); setPixelColorXY(1, 0, col); break; } // avoid square
+          else               setPixelColorXY(1, 1, col); // don't break
+        }
 
         // WLEDMM shortcut when no grouping/spacing used
         bool simpleSegment = (grouping == 1) && (spacing == 0);
@@ -972,10 +976,9 @@ void IRAM_ATTR_YN __attribute__((hot)) Segment::setPixelColor(int i, uint32_t co
           if (_bri_t < 255) scaled_col = color_fade(col, _bri_t);
         }
 
-        int x = 0;
-        int y = i; // i is the radius
+        int x = 0, y = i; // i is the radius
         int d = -(i >> 1); // Initial decision parameter
-              
+
         // Barrera's circle algorithm
         while (x <= y) {
           if (y < vH && x < vW) simpleSegment ? setPixelColorXY_fast(x, y, col, scaled_col, vW, vH) : setPixelColorXY(x, y, col);
@@ -1203,27 +1206,25 @@ uint32_t __attribute__((hot)) Segment::getPixelColor(int i) const
         if (vStrip>0) return getPixelColorXY(vStrip - 1, vH - i -1);
         else          return getPixelColorXY(0, vH - i -1);
         break;
-      case M12_pCorner:
-      case M12_pArc: {
-        if (i < max(vW, vH)) { 
-          return vW>vH ? getPixelColorXY(i, 0) : getPixelColorXY(0, i); // Corner and Arc
+      case M12_pArc:
+        if (i >= max(vW, vH)) { // use corner if possible
+          int x = 0, y = i;  // i is the radius
+          int d = -(i >> 1); // Initial decision parameter
+  
+          // Barrera's circle algorithm
+          while (x <= y) {
+              if (x < vW && y < vH) return getPixelColorXY(x, y);
+              if (y < vW && x < vH) return getPixelColorXY(y, x);
+  
+              if (d <= 0) d += ++x;
+              else d -= --y;
+          }
+          return getPixelColorXY(vW-1, vH-1); // Last pixel
           break;
         }
-        int x = 0;
-        int y = i;  // Radius value
-        int d = -(i >> 1);  // Initial decision parameter
-
-        // Barrera's circle algorithm
-        while (x <= y) {
-            if (x < vW && y < vH) return getPixelColorXY(x, y);
-            if (y < vW && x < vH) return getPixelColorXY(y, x);
-
-            if (d <= 0) d += ++x;
-            else d -= --y;
-        }
-        return getPixelColorXY(vW-1, vH-1); // Last pixel
-        break;
-      }
+      case M12_pCorner:
+        return vW>vH ? getPixelColorXY(i, 0) : getPixelColorXY(0, i); // Corner and Arc
+        break;     
       case M12_jMap: //WLEDMM jMap
         if (jMap)
           return ((JMapC *)jMap)->getPixelColor(i);
